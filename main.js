@@ -1,151 +1,176 @@
-// =============================
-// 1. Three.js 基础场景
-// =============================
-let scene = new THREE.Scene();
-let camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 1.2, 3);
+// =================================================================
+// VISTA MVP DEMO
+// main.js - with Hand, Mouse, and Touch Controls
+// =================================================================
 
-let renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+// 场景、相机、渲染器
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 
-// 灯光
-const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.4);
-light.position.set(0, 1, 0);
-scene.add(light);
+// 目标旋转值 (用于平滑过渡)
+let targetRotationX = 0;
+let targetRotationY = 0;
+const dampingFactor = 0.05; // 旋转的平滑/阻尼系数
 
-// 模型容器
-let modelGroup = new THREE.Group();
-scene.add(modelGroup);
+// 统一的拖拽控制变量
+let isPointerDown = false;
+let previousPointerPosition = { x: 0, y: 0 };
+const dragRotationFactor = 0.005; // 鼠标和手指拖拽的旋转灵敏度
 
-// =============================
-// 2. 加载 GLB 模型
-// =============================
-const loader = new THREE.GLTFLoader();
+// 初始化函数
+function init() {
+    // 设置渲染器
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
 
-// *** 替换成本地模型路径： ./model.glb ***
-loader.load("./model.glb", function (gltf) {
-    const model = gltf.scene;
+    // 设置相机位置
+    camera.position.z = 2;
 
-    // 强制居中
-    model.position.set(0, 0, 0);
+    // 添加环境光和点光源
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const pointLight = new THREE.PointLight(0xffffff, 1);
+    pointLight.position.set(5, 5, 5);
+    scene.add(pointLight);
 
-    // 强制缩放（非常关键）
-    model.scale.set(1, 1, 1);
+    // 加载3D模型
+    const loader = new THREE.GLTFLoader();
+    const infoPopup = document.getElementById('infoPopup');
+    infoPopup.style.display = 'block';
 
-    // 自动居中到相机前
-    const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    model.position.sub(center);
+    loader.load(
+        'model.glb',
+        (gltf) => {
+            console.log('模型加载成功');
+            infoPopup.style.display = 'none';
+            scene.model = gltf.scene;
+            // 自动缩放模型以适应视图
+            const box = new THREE.Box3().setFromObject(scene.model);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 * Math.tan(fov * 2));
+            cameraZ *= 1.5; // Add a little buffer
+            camera.position.z = cameraZ;
+            const yOffset = maxDim * 0.1;
+            camera.lookAt(center.x, center.y + yOffset, center.z);
+            scene.model.position.sub(center); // 将模型居中
+            scene.add(scene.model);
+        },
+        undefined,
+        (error) => {
+            console.error('模型加载失败:', error);
+            infoPopup.textContent = 'Error loading model. Make sure model.glb is in the same folder.';
+        }
+    );
 
-    modelGroup.add(model);
+    // 监听窗口大小变化
+    window.addEventListener('resize', onWindowResize);
 
-    console.log("模型加载成功");
-}, undefined, function (err) {
-    console.error("加载模型失败：", err);
-});
+    // ======================= 统一的拖拽事件监听 =======================
+    // 鼠标事件
+    renderer.domElement.addEventListener('mousedown', onPointerDown);
+    renderer.domElement.addEventListener('mousemove', onPointerMove);
+    renderer.domElement.addEventListener('mouseup', onPointerUp);
+    renderer.domElement.addEventListener('mouseleave', onPointerUp);
+    // 手指触摸事件
+    renderer.domElement.addEventListener('touchstart', onPointerDown, { passive: false });
+    renderer.domElement.addEventListener('touchmove', onPointerMove, { passive: false });
+    renderer.domElement.addEventListener('touchend', onPointerUp);
+    // ===============================================================
 
-// =============================
-// 3. 手势识别（MediaPipe）
-// =============================
-let videoEl = document.getElementById("camInput");
-
-const hands = new Hands({
-    locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-});
-
-hands.setOptions({
-    maxNumHands: 1,
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6
-});
-
-// 记录上次手势位置
-let lastX = null;
-let lastY = null;
-
-hands.onResults((results) => {
-    if (!results.multiHandLandmarks[0]) return;
-
-    const hand = results.multiHandLandmarks[0];
-
-    // 取手掌中心点（5个关键点平均）
-    let cx = 0, cy = 0;
-    for (let i of [0, 5, 9, 13, 17]) {
-        cx += hand[i].x;
-        cy += hand[i].y;
-    }
-    cx /= 5; cy /= 5;
-
-    if (lastX !== null) {
-        let dx = cx - lastX;
-        let dy = cy - lastY;
-
-        // 旋转模型（加强比例以增加灵敏度）
-        modelGroup.rotation.y -= dx * 6;
-        modelGroup.rotation.x -= dy * 4;
-    }
-
-    lastX = cx;
-    lastY = cy;
-});
-
-const cameraFeed = new Camera(videoEl, {
-    onFrame: async () => {
-        await hands.send({ image: videoEl });
-    },
-    width: 640,
-    height: 480
-});
-cameraFeed.start();
-
-// =============================
-// 4. 热点 Raycaster（指向信息卡片）
-// =============================
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-const popup = document.getElementById("infoPopup");
-
-// 示例热点（可改成你的产品卖点）
-let hotspot = {
-    position: new THREE.Vector3(0.2, 0.4, 0),
-    text: "这是卖点：高强度材质 + 精密加工"
-};
-
-let sphereGeom = new THREE.SphereGeometry(0.02, 16, 16);
-let sphereMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-let hotspotMesh = new THREE.Mesh(sphereGeom, sphereMat);
-hotspotMesh.position.copy(hotspot.position);
-scene.add(hotspotMesh);
-
-// 指向检测
-function checkHotspot() {
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects([hotspotMesh]);
-    if (intersects.length > 0) {
-        popup.style.display = "block";
-        popup.style.left = window.innerWidth / 2 + "px";
-        popup.style.top = window.innerHeight / 2 + "px";
-        popup.innerHTML = hotspot.text;
-    } else {
-        popup.style.display = "none";
-    }
+    // 启动动画循环
+    animate();
 }
 
-// =============================
-// 5. 动画循环
-// =============================
+// 动画循环
 function animate() {
     requestAnimationFrame(animate);
-    checkHotspot();
+    if (scene.model) {
+        scene.model.rotation.y += (targetRotationY - scene.model.rotation.y) * dampingFactor;
+        scene.model.rotation.x += (targetRotationX - scene.model.rotation.x) * dampingFactor;
+    }
     renderer.render(scene, camera);
 }
-animate();
 
-// 自适应
-window.addEventListener('resize', () => {
+// 窗口大小调整函数
+function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-});
+}
+
+// ======================= 统一的拖拽控制函数 =======================
+function onPointerDown(event) {
+    // 阻止触摸事件的默认行为 (如页面滚动)
+    if (event.type.startsWith('touch')) {
+        event.preventDefault();
+    }
+    isPointerDown = true;
+    const clientX = event.clientX || event.touches[0].clientX;
+    const clientY = event.clientY || event.touches[0].clientY;
+    previousPointerPosition.x = clientX;
+    previousPointerPosition.y = clientY;
+}
+
+function onPointerMove(event) {
+    if (!isPointerDown) return;
+    if (event.type.startsWith('touch')) {
+        event.preventDefault();
+    }
+    const clientX = event.clientX || event.touches[0].clientX;
+    const clientY = event.clientY || event.touches[0].clientY;
+    const deltaX = clientX - previousPointerPosition.x;
+    const deltaY = clientY - previousPointerPosition.y;
+
+    targetRotationY += deltaX * dragRotationFactor;
+    targetRotationX += deltaY * dragRotationFactor;
+
+    previousPointerPosition.x = clientX;
+    previousPointerPosition.y = clientY;
+}
+
+function onPointerUp() {
+    isPointerDown = false;
+}
+// ===============================================================
+
+// ======================= MediaPipe 手势识别部分 =======================
+const videoElement = document.getElementById('camInput');
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({ image: videoElement }); },
+        width: 1280,
+        height: 720
+    });
+    camera.start().catch(err => { console.error("摄像头启动失败:", err); });
+    let lastPalmPosition = null;
+    const handRotationFactor = 0.02;
+    function onResults(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const palmPosition = landmarks[0];
+            if (lastPalmPosition) {
+                const deltaX = palmPosition.x - lastPalmPosition.x;
+                const deltaY = palmPosition.y - lastPalmPosition.y;
+                targetRotationY -= deltaX * handRotationFactor;
+                targetRotationX -= deltaY * handRotationFactor;
+            }
+            lastPalmPosition = palmPosition;
+        } else {
+            lastPalmPosition = null;
+        }
+    }
+} else {
+    console.log("浏览器不支持摄像头或未在安全环境下运行 (HTTPS)");
+}
+// ===============================================================
+
+// 启动！
+init();
