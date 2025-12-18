@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VISTA MVP Demo</title>
+
+    <!-- Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+
+    <!-- MediaPipe 手势识别 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+        }
+        #infoPopup {
+            position: absolute;
+            padding: 10px 16px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            border-radius: 6px;
+            pointer-events: none;
+            display: none;
+            font-size: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="infoPopup">Loading...</div>
+    <video id="camInput" style="display:none"></video>
+
+    <script src="main.js"></script>
+</body>
+</html>
